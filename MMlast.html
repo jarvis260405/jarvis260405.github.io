@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Motor Matemático - Navegación Fantasma Real</title>
+    
+    <script>
+        window.MathJax = {
+            loader: { load: ['[tex]/html'] },
+            tex: { 
+                packages: {'[+]': ['html']},
+                inlineMath: [['$', '$']], 
+                displayMath: [['$$', '$$']]
+            },
+            startup: { typeset: false }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+
+    <style>
+        body {
+            background-color: #1e1e1e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-size: 50px;
+            color: white;
+            font-family: sans-serif;
+        }
+
+        #indicador-modo {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-family: monospace;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            transition: all 0.2s ease;
+        }
+
+        .modo-insercion { background-color: #007acc; color: white; }
+        .modo-comando { background-color: #ff9800; color: black; box-shadow: 0 0 10px rgba(255, 152, 0, 0.5); }
+
+        #lienzo {
+            padding: 50px;
+            background: #2d2d2d;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            min-width: 400px;
+            min-height: 80px;
+            text-align: center;
+        }
+
+        .hitbox {
+            transition: all 0.1s ease;
+            cursor: pointer;
+            padding: 2px;
+            margin: 1px;
+        }
+
+        .hitbox:hover {
+            background-color: rgba(80, 180, 255, 0.2);
+            outline: 2px dashed rgba(80, 180, 255, 0.6);
+            border-radius: 4px;
+        }
+
+        .hitbox.seleccionado {
+            background-color: rgba(0, 255, 128, 0.25) !important;
+            outline: 2px solid rgb(0, 255, 128) !important;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="indicador-modo" class="modo-insercion">INSERCIÓN</div>
+    <div id="lienzo">Cargando motor...</div>
+
+    <script>
+        const AJUSTES = { fraccionInteligente: true, reconocimientoFunciones: true };
+        let modoGlobal = 'INSERCION'; 
+
+        function actualizarUI() {
+            const indicador = document.getElementById('indicador-modo');
+            indicador.textContent = modoGlobal;
+            indicador.className = modoGlobal === 'INSERCION' ? 'modo-insercion' : 'modo-comando';
+        }
+
+        // ==========================================
+        // 1. CEREBRO: AST Y MEMORIA
+        // ==========================================
+        const TIPO = {
+            CONTENEDOR: 'contenedor', VARIABLE: 'variable', NUMERO: 'numero',
+            OPERADOR: 'operador', FRACCION: 'fraccion', INTEGRAL: 'integral',
+            RAIZ: 'raiz', PARENTESIS: 'parentesis', SUBSUPER: 'subsuper', 
+            FUNCION: 'funcion', HUECO: 'hueco'
+        };
+
+        const registroNodos = {}; 
+        let nodoSeleccionado = null; 
+
+        function generarId() { return 'nodo-' + Math.random().toString(36).substr(2, 9); }
+        function registrar(nodo) { registroNodos[nodo.id] = nodo; return nodo; }
+
+        function crearNodoValor(tipo, valor) { return registrar({ id: generarId(), tipo: tipo, valor: valor, padre: null }); }
+        function crearNodoContenedor() { return registrar({ id: generarId(), tipo: TIPO.CONTENEDOR, hijos: [], padre: null }); }
+        
+        // Estandarización Absoluta: Toda estructura DEBE envolver sus partes en Contenedores
+        function crearEstructuraEstandar(tipo, props) {
+            const nodo = registrar({ id: generarId(), tipo: tipo, padre: null });
+            for (let key in props) {
+                const contenedor = crearNodoContenedor();
+                contenedor.padre = nodo;
+                if (props[key]) {
+                    props[key].padre = contenedor;
+                    contenedor.hijos.push(props[key]);
+                } else {
+                    const hueco = crearNodoValor(TIPO.HUECO, null);
+                    hueco.padre = contenedor;
+                    contenedor.hijos.push(hueco);
+                }
+                nodo[key] = contenedor;
+            }
+            return nodo;
+        }
+
+        let arbolPrincipal = crearNodoContenedor();
+        let huecoInicial = crearNodoValor(TIPO.HUECO, null);
+        huecoInicial.padre = arbolPrincipal;
+        arbolPrincipal.hijos.push(huecoInicial);
+        nodoSeleccionado = huecoInicial;
+
+        // ==========================================
+        // 1.5 HISTORIAL
+        // ==========================================
+        let historialDeshacer = [];
+
+        function serializarArbol(nodo) {
+            if (!nodo) return null;
+            const clon = { id: nodo.id, tipo: nodo.tipo };
+            if (nodo.valor !== undefined) clon.valor = nodo.valor;
+            if (nodo.nombre !== undefined) clon.nombre = nodo.nombre;
+            if (nodo.hijos) clon.hijos = nodo.hijos.map(serializarArbol);
+            
+            ['numerador', 'denominador', 'inferior', 'superior', 'integrando', 'interior', 'base', 'subindice', 'exponente', 'argumento'].forEach(key => {
+                if (nodo[key]) clon[key] = serializarArbol(nodo[key]);
+            });
+            return clon;
+        }
+
+        function reconstruirArbol(clon, padre = null) {
+            if (!clon) return null;
+            const nodo = { ...clon, padre: padre };
+            registroNodos[nodo.id] = nodo; 
+            if (nodo.hijos) nodo.hijos = nodo.hijos.map(h => reconstruirArbol(h, nodo));
+            
+            ['numerador', 'denominador', 'inferior', 'superior', 'integrando', 'interior', 'base', 'subindice', 'exponente', 'argumento'].forEach(key => {
+                if (nodo[key]) nodo[key] = reconstruirArbol(nodo[key], nodo);
+            });
+            return nodo;
+        }
+
+        function capturarEstadoPreMutacion() {
+            return { arbolStr: JSON.stringify(serializarArbol(arbolPrincipal)), idSeleccionado: nodoSeleccionado ? nodoSeleccionado.id : null };
+        }
+
+        function evaluarYGuardarHistorial(estadoPre) {
+            const estadoPostStr = JSON.stringify(serializarArbol(arbolPrincipal));
+            if (estadoPre.arbolStr !== estadoPostStr) {
+                historialDeshacer.push({ arbol: JSON.parse(estadoPre.arbolStr), idSeleccionado: estadoPre.idSeleccionado });
+                if (historialDeshacer.length > 50) historialDeshacer.shift();
+            }
+        }
+
+        function deshacer() {
+            if (historialDeshacer.length === 0) return;
+            const estadoAnterior = historialDeshacer.pop();
+            for (let key in registroNodos) delete registroNodos[key];
+            arbolPrincipal = reconstruirArbol(estadoAnterior.arbol);
+            nodoSeleccionado = registroNodos[estadoAnterior.idSeleccionado] || arbolPrincipal.hijos[0];
+            renderizar();
+        }
+
+        // ==========================================
+        // 2. LÓGICA DE MANIPULACIÓN 
+        // ==========================================
+        function reemplazarEnPadre(viejoNodo, nuevoNodo) {
+            const padre = viejoNodo.padre;
+            if (!padre) return; 
+            nuevoNodo.padre = padre;
+
+            if (padre.tipo === TIPO.CONTENEDOR) {
+                const idx = padre.hijos.indexOf(viejoNodo);
+                if (idx !== -1) padre.hijos[idx] = nuevoNodo;
+            } else {
+                for (let key of ['numerador', 'denominador', 'inferior', 'superior', 'integrando', 'interior', 'base', 'subindice', 'exponente', 'argumento']) {
+                    if (padre[key] === viejoNodo) { padre[key] = nuevoNodo; break; }
+                }
+            }
+        }
+
+        function insertarEnCursor(nuevoNodo) {
+            if (!nodoSeleccionado) return;
+            if (nodoSeleccionado.tipo === TIPO.HUECO) {
+                reemplazarEnPadre(nodoSeleccionado, nuevoNodo);
+                delete registroNodos[nodoSeleccionado.id];
+                nodoSeleccionado = nuevoNodo;
+            } else if (nodoSeleccionado.tipo === TIPO.CONTENEDOR) {
+                nuevoNodo.padre = nodoSeleccionado;
+                nodoSeleccionado.hijos.push(nuevoNodo);
+                nodoSeleccionado = nuevoNodo;
+            } else {
+                const padre = nodoSeleccionado.padre;
+                if (padre && padre.tipo === TIPO.CONTENEDOR) {
+                    nuevoNodo.padre = padre;
+                    const idx = padre.hijos.indexOf(nodoSeleccionado);
+                    padre.hijos.splice(idx + 1, 0, nuevoNodo);
+                    nodoSeleccionado = nuevoNodo;
+                }
+            }
+        }
+
+        // --- GATILLO COMPILADOR Y ESCÁNER ---
+        function intentarCompilarFuncion() {
+            if (!AJUSTES.reconocimientoFunciones || !nodoSeleccionado || !nodoSeleccionado.padre) return false;
+            const padre = nodoSeleccionado.padre;
+            if (padre.tipo !== TIPO.CONTENEDOR) return false;
+
+            const idxActual = padre.hijos.indexOf(nodoSeleccionado);
+            let palabraEscaneada = "";
+            let nodosAborrar = [];
+
+            for (let i = idxActual; i >= 0; i--) {
+                const n = padre.hijos[i];
+                if (n.tipo === TIPO.VARIABLE) {
+                    palabraEscaneada = n.valor + palabraEscaneada;
+                    nodosAborrar.unshift(n);
+                } else { break; }
+            }
+
+            const diccionario = ['sin', 'cos', 'tan', 'sec', 'csc', 'cot', 'arcsin', 'arccos', 'arctan', 'ln', 'log', 'lim', 'sinh', 'cosh', 'tanh'];
+            let funcEncontrada = null, longitudFunc = 0;
+
+            for(let f of diccionario) {
+                if (palabraEscaneada.endsWith(f) && f.length > longitudFunc) {
+                    funcEncontrada = f; longitudFunc = f.length;
+                }
+            }
+
+            if (funcEncontrada) {
+                const nodosFunc = nodosAborrar.slice(nodosAborrar.length - longitudFunc);
+                const idxInicioFunc = padre.hijos.indexOf(nodosFunc[0]);
+                
+                const nodoFunc = crearEstructuraEstandar(TIPO.FUNCION, { argumento: null });
+                nodoFunc.nombre = funcEncontrada;
+                nodoFunc.padre = padre;
+
+                padre.hijos.splice(idxInicioFunc, longitudFunc, nodoFunc);
+                nodosFunc.forEach(n => delete registroNodos[n.id]);
+                nodoSeleccionado = nodoFunc.argumento.hijos[0];
+                return true;
+            }
+            return false;
+        }
+
+        function escanearFronteraIzquierda(padre, idxActual) {
+            let idxInicio = idxActual;
+            const fronteras = ['+', '-', '=', '<', '>', '\\le', '\\ge']; 
+            while (idxInicio >= 0) {
+                const nodoAnalizado = padre.hijos[idxInicio];
+                if (nodoAnalizado.tipo === TIPO.OPERADOR && fronteras.includes(nodoAnalizado.valor)) break;
+                idxInicio--;
+            }
+            return idxInicio + 1; 
+        }
+
+        function aplicarFraccionInteligente() {
+            if (!nodoSeleccionado || !nodoSeleccionado.padre) return;
+            const padre = nodoSeleccionado.padre;
+
+            if (!AJUSTES.fraccionInteligente || padre.tipo !== TIPO.CONTENEDOR) {
+                const f = crearEstructuraEstandar(TIPO.FRACCION, { numerador: null, denominador: null });
+                insertarEnCursor(f); nodoSeleccionado = f.numerador.hijos[0]; return;
+            }
+
+            let idxActual = padre.hijos.indexOf(nodoSeleccionado);
+            if (nodoSeleccionado.tipo === TIPO.HUECO) {
+                delete registroNodos[nodoSeleccionado.id]; padre.hijos.splice(idxActual, 1); idxActual--;
+            }
+
+            if (idxActual < 0) {
+                const nuevaFraccion = crearEstructuraEstandar(TIPO.FRACCION, { numerador: null, denominador: null });
+                nuevaFraccion.padre = padre; padre.hijos.splice(0, 0, nuevaFraccion);
+                nodoSeleccionado = nuevaFraccion.numerador.hijos[0]; return;
+            }
+
+            const idxInicio = escanearFronteraIzquierda(padre, idxActual);
+            const nodosAtrapados = padre.hijos.splice(idxInicio, idxActual - idxInicio + 1);
+            
+            const nuevaFraccion = crearEstructuraEstandar(TIPO.FRACCION, { numerador: null, denominador: null });
+            
+            // Reemplazamos el hueco del numerador por los atrapados
+            const contNum = nuevaFraccion.numerador;
+            delete registroNodos[contNum.hijos[0].id];
+            contNum.hijos = nodosAtrapados;
+            nodosAtrapados.forEach(n => n.padre = contNum);
+
+            nuevaFraccion.padre = padre;
+            padre.hijos.splice(idxInicio, 0, nuevaFraccion);
+            nodoSeleccionado = nuevaFraccion.denominador.hijos[0];
+        }
+
+        // ==========================================
+        // 3. TRADUCTOR: AST -> MATHJAX
+        // ==========================================
+        function compilarALatex(nodo) {
+            if (!nodo) return "";
+            let latexInterno = "";
+
+            switch (nodo.tipo) {
+                case TIPO.VARIABLE: case TIPO.NUMERO: case TIPO.OPERADOR: latexInterno = nodo.valor; break;
+                case TIPO.HUECO: latexInterno = "\\square"; break;
+                case TIPO.FRACCION: latexInterno = `\\frac{${compilarALatex(nodo.numerador)}}{${compilarALatex(nodo.denominador)}}`; break;
+                case TIPO.INTEGRAL: latexInterno = `\\int_{${compilarALatex(nodo.inferior)}}^{${compilarALatex(nodo.superior)}} ${compilarALatex(nodo.integrando)}`; break;
+                case TIPO.RAIZ: latexInterno = `\\sqrt{${compilarALatex(nodo.interior)}}`; break;
+                case TIPO.PARENTESIS: latexInterno = `\\left( ${compilarALatex(nodo.interior)} \\right)`; break;
+                case TIPO.FUNCION: latexInterno = `\\${nodo.nombre}{\\left( ${compilarALatex(nodo.argumento)} \\right)}`; break;
+                case TIPO.SUBSUPER: latexInterno = `{${compilarALatex(nodo.base)}}_{${compilarALatex(nodo.subindice)}}^{${compilarALatex(nodo.exponente)}}`; break;
+                case TIPO.CONTENEDOR: latexInterno = nodo.hijos.length === 0 ? "\\square" : nodo.hijos.map(compilarALatex).join(""); break;
+            }
+
+            if (nodo === arbolPrincipal) return latexInterno;
+            const claseActiva = (nodoSeleccionado && nodo.id === nodoSeleccionado.id) ? " seleccionado" : "";
+            return `\\class{hitbox${claseActiva}}{\\cssId{${nodo.id}}{${latexInterno}}}`;
+        }
+
+        function renderizar() {
+            const lienzo = document.getElementById('lienzo');
+            if (!lienzo) return;
+            lienzo.innerHTML = `$$ ${compilarALatex(arbolPrincipal)} $$`; 
+            if (window.MathJax && window.MathJax.typesetPromise) { MathJax.typesetPromise([lienzo]).catch(err => console.error(err)); } 
+            else { setTimeout(renderizar, 50); }
+        }
+
+        // ==========================================
+        // 4. ALGORITMOS DE NAVEGACIÓN FANTASMA
+        // ==========================================
+        function navegarFantasmaDerecha() {
+            if (!nodoSeleccionado) return;
+            let actual = nodoSeleccionado;
+
+            // Si estamos en un hueco o caracter dentro de un contenedor
+            if (actual.padre && actual.padre.tipo === TIPO.CONTENEDOR) {
+                const padre = actual.padre;
+                const idx = padre.hijos.indexOf(actual);
+
+                if (idx < padre.hijos.length - 1) {
+                    // Hay un hermano a la derecha
+                    let hermano = padre.hijos[idx + 1];
+                    // Si el hermano es una estructura, entrar en su primer slot
+                    if (hermano.tipo === TIPO.FRACCION) nodoSeleccionado = hermano.numerador.hijos[0];
+                    else if (hermano.tipo === TIPO.INTEGRAL) nodoSeleccionado = hermano.inferior.hijos[0];
+                    else if ([TIPO.RAIZ, TIPO.PARENTESIS, TIPO.FUNCION].includes(hermano.tipo)) nodoSeleccionado = (hermano.interior || hermano.argumento).hijos[0];
+                    else if (hermano.tipo === TIPO.SUBSUPER) nodoSeleccionado = hermano.base.hijos[0];
+                    else nodoSeleccionado = hermano;
+                    return;
+                } else {
+                    // Fin del contenedor. Toca saltar a la siguiente ranura de la estructura padre
+                    const estructura = padre.padre;
+                    if (!estructura) return; // Raíz principal
+
+                    if (estructura.tipo === TIPO.FRACCION) {
+                        if (padre === estructura.numerador) { nodoSeleccionado = estructura.denominador.hijos[0]; return; }
+                        if (padre === estructura.denominador) { actual = estructura; } // Sale de la fraccion, buscar hermano de la fraccion
+                    } else if (estructura.tipo === TIPO.INTEGRAL) {
+                        if (padre === estructura.inferior) { nodoSeleccionado = estructura.superior.hijos[0]; return; }
+                        if (padre === estructura.superior) { nodoSeleccionado = estructura.integrando.hijos[0]; return; }
+                        if (padre === estructura.integrando) { actual = estructura; }
+                    } else if (estructura.tipo === TIPO.SUBSUPER) {
+                        if (padre === estructura.base) { nodoSeleccionado = estructura.exponente.hijos[0]; return; }
+                        if (padre === estructura.exponente) { actual = estructura; }
+                    } else {
+                        // Raiz, Parentesis, Funcion (solo tienen 1 ranura), así que salimos
+                        actual = estructura;
+                    }
+                }
+            }
+
+            // Si "actual" ahora es una estructura entera (porque acabamos de salir de ella), 
+            // seleccionamos a su hermano derecho
+            if (actual.padre && actual.padre.tipo === TIPO.CONTENEDOR) {
+                const padreCont = actual.padre;
+                const idxCont = padreCont.hijos.indexOf(actual);
+                if (idxCont < padreCont.hijos.length - 1) {
+                    nodoSeleccionado = padreCont.hijos[idxCont + 1];
+                } else {
+                    nodoSeleccionado = actual; // Se queda en la estructura si no hay nada más
+                }
+            }
+        }
+
+        function navegarFantasmaIzquierda() {
+            if (!nodoSeleccionado) return;
+            let actual = nodoSeleccionado;
+
+            // Si la estructura entera está seleccionada, entrar al final de su última ranura
+            if (actual.tipo !== TIPO.HUECO && actual.tipo !== TIPO.VARIABLE && actual.tipo !== TIPO.NUMERO && actual.tipo !== TIPO.OPERADOR && actual.tipo !== TIPO.CONTENEDOR) {
+                 if (actual.tipo === TIPO.FRACCION) { nodoSeleccionado = actual.denominador.hijos[actual.denominador.hijos.length-1]; return; }
+                 if (actual.tipo === TIPO.INTEGRAL) { nodoSeleccionado = actual.integrando.hijos[actual.integrando.hijos.length-1]; return; }
+                 if ([TIPO.RAIZ, TIPO.PARENTESIS, TIPO.FUNCION].includes(actual.tipo)) { const p = (actual.interior || actual.argumento); nodoSeleccionado = p.hijos[p.hijos.length-1]; return; }
+                 if (actual.tipo === TIPO.SUBSUPER) { nodoSeleccionado = actual.exponente.hijos[actual.exponente.hijos.length-1]; return; }
+            }
+
+            if (actual.padre && actual.padre.tipo === TIPO.CONTENEDOR) {
+                const padre = actual.padre;
+                const idx = padre.hijos.indexOf(actual);
+
+                if (idx > 0) {
+                    let hermano = padre.hijos[idx - 1];
+                    if (hermano.tipo 
