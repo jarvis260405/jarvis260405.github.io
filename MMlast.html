@@ -423,4 +423,285 @@
 
                 if (idx > 0) {
                     let hermano = padre.hijos[idx - 1];
-                    if (hermano.tipo 
+                    if (hermano.tipo === TIPO.FRACCION) nodoSeleccionado = hermano.denominador.hijos[hermano.denominador.hijos.length-1];
+                    else if (hermano.tipo === TIPO.INTEGRAL) nodoSeleccionado = hermano.integrando.hijos[hermano.integrando.hijos.length-1];
+                    else if ([TIPO.RAIZ, TIPO.PARENTESIS, TIPO.FUNCION].includes(hermano.tipo)) { const p = (hermano.interior || hermano.argumento); nodoSeleccionado = p.hijos[p.hijos.length-1]; }
+                    else if (hermano.tipo === TIPO.SUBSUPER) nodoSeleccionado = hermano.exponente.hijos[hermano.exponente.hijos.length-1];
+                    else nodoSeleccionado = hermano;
+                    return;
+                } else {
+                    const estructura = padre.padre;
+                    if (!estructura) return; 
+
+                    if (estructura.tipo === TIPO.FRACCION) {
+                        if (padre === estructura.denominador) { nodoSeleccionado = estructura.numerador.hijos[estructura.numerador.hijos.length-1]; return; }
+                        if (padre === estructura.numerador) { actual = estructura; } 
+                    } else if (estructura.tipo === TIPO.INTEGRAL) {
+                        if (padre === estructura.integrando) { nodoSeleccionado = estructura.superior.hijos[estructura.superior.hijos.length-1]; return; }
+                        if (padre === estructura.superior) { nodoSeleccionado = estructura.inferior.hijos[estructura.inferior.hijos.length-1]; return; }
+                        if (padre === estructura.inferior) { actual = estructura; }
+                    } else if (estructura.tipo === TIPO.SUBSUPER) {
+                        if (padre === estructura.exponente) { nodoSeleccionado = estructura.base.hijos[estructura.base.hijos.length-1]; return; }
+                        if (padre === estructura.base) { actual = estructura; }
+                    } else {
+                        actual = estructura;
+                    }
+                }
+            }
+
+            if (actual.padre && actual.padre.tipo === TIPO.CONTENEDOR) {
+                const padreCont = actual.padre;
+                const idxCont = padreCont.hijos.indexOf(actual);
+                if (idxCont > 0) {
+                    nodoSeleccionado = padreCont.hijos[idxCont - 1];
+                } else {
+                    nodoSeleccionado = actual; 
+                }
+            }
+        }
+
+
+        // ==========================================
+        // 5. CONTROLADOR DE EVENTOS
+        // ==========================================
+        document.addEventListener('click', function(event) {
+            const elementoClicado = event.target.closest('.hitbox');
+            if (elementoClicado && registroNodos[elementoClicado.id]) {
+                event.stopPropagation(); nodoSeleccionado = registroNodos[elementoClicado.id]; renderizar();
+            }
+        });
+
+        const tecladoComun = {
+            "Backspace": "borrar_bloque", "ArrowUp": "navegar_arriba", "ArrowDown": "navegar_abajo",
+            "ArrowRight": "navegar_derecha", "ArrowLeft": "navegar_izquierda"
+        };
+
+        document.addEventListener('keydown', function(event) {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'z') { event.preventDefault(); deshacer(); return; }
+            if (["Shift", "Control", "Meta"].includes(event.key)) return;
+            if (event.altKey && (event.key === 'ArrowRight' || event.key === 'ArrowLeft')) event.preventDefault();
+            if (event.key === 'Escape') { modoGlobal = 'COMANDO'; actualizarUI(); return; }
+            if (modoGlobal === 'COMANDO' && event.key === 'i') { modoGlobal = 'INSERCION'; actualizarUI(); event.preventDefault(); return; }
+
+            let comandoComun = tecladoComun[event.key];
+            if (event.shiftKey) {
+                if (event.key === 'ArrowRight') comandoComun = 'expandir_derecha';
+                if (event.key === 'ArrowLeft') comandoComun = 'expandir_izquierda';
+            } else if (event.altKey) {
+                if (event.key === 'ArrowRight') comandoComun = 'navegar_fantasma_derecha';
+                if (event.key === 'ArrowLeft') comandoComun = 'navegar_fantasma_izquierda';
+            }
+
+            const estadoPre = capturarEstadoPreMutacion();
+            if (comandoComun || event.key.length === 1) if(!event.altKey) event.preventDefault();
+
+            if (comandoComun) {
+                switch (comandoComun) {
+                    case "expandir_derecha":
+                        if (!nodoSeleccionado || !nodoSeleccionado.padre) break;
+                        const padreExpDer = nodoSeleccionado.padre;
+                        if (padreExpDer.tipo === TIPO.CONTENEDOR) {
+                            const idxDer = padreExpDer.hijos.indexOf(nodoSeleccionado);
+                            if (idxDer >= 0 && idxDer < padreExpDer.hijos.length - 1) {
+                                const hermanoDer = padreExpDer.hijos[idxDer + 1];
+                                if (nodoSeleccionado.tipo === TIPO.CONTENEDOR && nodoSeleccionado !== arbolPrincipal) {
+                                    hermanoDer.padre = nodoSeleccionado; nodoSeleccionado.hijos.push(hermanoDer); padreExpDer.hijos.splice(idxDer + 1, 1);
+                                } else {
+                                    const nuevoGrupoDer = crearNodoContenedor(); nuevoGrupoDer.padre = padreExpDer;
+                                    nodoSeleccionado.padre = nuevoGrupoDer; hermanoDer.padre = nuevoGrupoDer;
+                                    nuevoGrupoDer.hijos.push(nodoSeleccionado, hermanoDer);
+                                    padreExpDer.hijos.splice(idxDer, 2, nuevoGrupoDer); nodoSeleccionado = nuevoGrupoDer;
+                                }
+                            }
+                        }
+                        break;
+
+                    case "expandir_izquierda":
+                        if (!nodoSeleccionado || !nodoSeleccionado.padre) break;
+                        const padreExpIzq = nodoSeleccionado.padre;
+                        if (padreExpIzq.tipo === TIPO.CONTENEDOR) {
+                            const idxIzq = padreExpIzq.hijos.indexOf(nodoSeleccionado);
+                            if (idxIzq > 0) {
+                                const hermanoIzq = padreExpIzq.hijos[idxIzq - 1];
+                                if (nodoSeleccionado.tipo === TIPO.CONTENEDOR && nodoSeleccionado !== arbolPrincipal) {
+                                    hermanoIzq.padre = nodoSeleccionado; nodoSeleccionado.hijos.unshift(hermanoIzq); padreExpIzq.hijos.splice(idxIzq - 1, 1);
+                                } else {
+                                    const nuevoGrupoIzq = crearNodoContenedor(); nuevoGrupoIzq.padre = padreExpIzq;
+                                    hermanoIzq.padre = nuevoGrupoIzq; nodoSeleccionado.padre = nuevoGrupoIzq;
+                                    nuevoGrupoIzq.hijos.push(hermanoIzq, nodoSeleccionado);
+                                    padreExpIzq.hijos.splice(idxIzq - 1, 2, nuevoGrupoIzq); nodoSeleccionado = nuevoGrupoIzq;
+                                }
+                            }
+                        }
+                        break;
+
+                    case "borrar_bloque":
+                        if (!nodoSeleccionado) break;
+                        if (nodoSeleccionado.tipo === TIPO.CONTENEDOR && nodoSeleccionado !== arbolPrincipal) {
+                            const padre = nodoSeleccionado.padre;
+                            if (padre && padre.tipo === TIPO.CONTENEDOR && nodoSeleccionado.hijos.length > 0) {
+                                const idx = padre.hijos.indexOf(nodoSeleccionado); const idViejo = nodoSeleccionado.id;
+                                nodoSeleccionado.hijos.forEach(h => h.padre = padre);
+                                paddle = padre.hijos.splice(idx, 1, ...nodoSeleccionado.hijos);
+                                nodoSeleccionado = padre.hijos[idx + nodoSeleccionado.hijos.length - 1]; 
+                                delete registroNodos[idViejo]; break;
+                            }
+                        }
+                        if (nodoSeleccionado.tipo === TIPO.NUMERO && nodoSeleccionado.valor.length > 1) nodoSeleccionado.valor = nodoSeleccionado.valor.slice(0, -1);
+                        else if (nodoSeleccionado.tipo !== TIPO.HUECO && nodoSeleccionado.padre) {
+                            const idViejo = nodoSeleccionado.id; const padre = nodoSeleccionado.padre;
+                            if (padre.tipo === TIPO.CONTENEDOR) {
+                                const idx = padre.hijos.indexOf(nodoSeleccionado); padre.hijos.splice(idx, 1);
+                                if (padre.hijos.length === 0) {
+                                    if (padre === arbolPrincipal) {
+                                        const nuevoHueco = crearNodoValor(TIPO.HUECO, null); nuevoHueco.padre = arbolPrincipal;
+                                        arbolPrincipal.hijos.push(nuevoHueco); nodoSeleccionado = nuevoHueco;
+                                    } else {
+                                        const nuevoHueco = crearNodoValor(TIPO.HUECO, null); reemplazarEnPadre(padre, nuevoHueco);
+                                        delete registroNodos[padre.id]; nodoSeleccionado = nuevoHueco;
+                                    }
+                                } else { nodoSeleccionado = padre.hijos[idx - 1] || padre.hijos[0]; }
+                            } else {
+                                const nuevoHueco = crearNodoValor(TIPO.HUECO, null); reemplazarEnPadre(nodoSeleccionado, nuevoHueco); nodoSeleccionado = nuevoHueco;
+                            }
+                            delete registroNodos[idViejo];
+                        }
+                        break;
+
+                    case "navegar_arriba":
+                        if (nodoSeleccionado && nodoSeleccionado.padre) {
+                            nodoSeleccionado = nodoSeleccionado.padre;
+                            if (nodoSeleccionado === arbolPrincipal) nodoSeleccionado = nodoSeleccionado.hijos[0];
+                        }
+                        break;
+
+                    case "navegar_abajo":
+                        if (!nodoSeleccionado) break;
+                        if (nodoSeleccionado.tipo === TIPO.CONTENEDOR && nodoSeleccionado.hijos.length > 0) nodoSeleccionado = nodoSeleccionado.hijos[0];
+                        else if (nodoSeleccionado.tipo === TIPO.FRACCION) nodoSeleccionado = nodoSeleccionado.numerador.hijos[0];
+                        else if (nodoSeleccionado.tipo === TIPO.INTEGRAL) nodoSeleccionado = nodoSeleccionado.integrando.hijos[0];
+                        else if (nodoSeleccionado.tipo === TIPO.RAIZ) nodoSeleccionado = nodoSeleccionado.interior.hijos[0];
+                        else if (nodoSeleccionado.tipo === TIPO.PARENTESIS) nodoSeleccionado = nodoSeleccionado.interior.hijos[0];
+                        else if (nodoSeleccionado.tipo === TIPO.FUNCION) nodoSeleccionado = nodoSeleccionado.argumento.hijos[0];
+                        else if (nodoSeleccionado.tipo === TIPO.SUBSUPER) nodoSeleccionado = nodoSeleccionado.base.hijos[0];
+                        break;
+
+                    case "navegar_derecha":
+                    case "navegar_izquierda":
+                        if (!nodoSeleccionado || !nodoSeleccionado.padre) break;
+                        const padreDir = nodoSeleccionado.padre;
+                        const dir = comandoComun === "navegar_derecha" ? 1 : -1;
+
+                        if (padreDir.tipo === TIPO.CONTENEDOR) {
+                            const idx = padreDir.hijos.indexOf(nodoSeleccionado); const nuevoIdx = idx + dir;
+                            if (nuevoIdx >= 0 && nuevoIdx < padreDir.hijos.length) nodoSeleccionado = padreDir.hijos[nuevoIdx];
+                        } else if (padreDir.tipo === TIPO.FRACCION) {
+                            if (nodoSeleccionado === padreDir.numerador && dir === 1) nodoSeleccionado = padreDir.denominador;
+                            else if (nodoSeleccionado === padreDir.denominador && dir === -1) nodoSeleccionado = padreDir.numerador;
+                        } else if (padreDir.tipo === TIPO.INTEGRAL) {
+                            const orden = [padreDir.inferior, padreDir.superior, padreDir.integrando];
+                            const nuevoIdx = orden.indexOf(nodoSeleccionado) + dir;
+                            if (nuevoIdx >= 0 && nuevoIdx < orden.length) nodoSeleccionado = orden[nuevoIdx];
+                        } else if (padreDir.tipo === TIPO.SUBSUPER) {
+                            const orden = [padreDir.base, padreDir.subindice, padreDir.exponente].filter(n => n !== null);
+                            const nuevoIdx = orden.indexOf(nodoSeleccionado) + dir;
+                            if (nuevoIdx >= 0 && nuevoIdx < orden.length) nodoSeleccionado = orden[nuevoIdx];
+                        }
+                        break;
+
+                    case "navegar_fantasma_derecha": navegarFantasmaDerecha(); break;
+                    case "navegar_fantasma_izquierda": navegarFantasmaIzquierda(); break;
+                }
+            } 
+            else if (modoGlobal === 'COMANDO' && event.key.length === 1) {
+                switch(event.key) {
+                    case 'f': 
+                        if (nodoSeleccionado && nodoSeleccionado.tipo !== TIPO.HUECO) {
+                            const f = crearEstructuraEstandar(TIPO.FRACCION, { numerador: null, denominador: null });
+                            reemplazarEnPadre(nodoSeleccionado, f);
+                            delete registroNodos[f.numerador.hijos[0].id]; f.numerador.hijos = [nodoSeleccionado]; nodoSeleccionado.padre = f.numerador;
+                            nodoSeleccionado = f.denominador.hijos[0]; 
+                        } else { 
+                            const f = crearEstructuraEstandar(TIPO.FRACCION, { numerador: null, denominador: null });
+                            insertarEnCursor(f); nodoSeleccionado = f.numerador.hijos[0];
+                        }
+                        break;
+                    case 'I': 
+                        const i = crearEstructuraEstandar(TIPO.INTEGRAL, { inferior: null, superior: null, integrando: null });
+                        insertarEnCursor(i); nodoSeleccionado = i.inferior.hijos[0]; break;
+                    case 'r': 
+                        if (nodoSeleccionado && nodoSeleccionado.tipo !== TIPO.HUECO) {
+                            const r = crearEstructuraEstandar(TIPO.RAIZ, { interior: null });
+                            reemplazarEnPadre(nodoSeleccionado, r); delete registroNodos[r.interior.hijos[0].id];
+                            r.interior.hijos = [nodoSeleccionado]; nodoSeleccionado.padre = r.interior;
+                        } else { 
+                            const r = crearEstructuraEstandar(TIPO.RAIZ, { interior: null });
+                            insertarEnCursor(r); nodoSeleccionado = r.interior.hijos[0]; 
+                        }
+                        break;
+                    case '(': 
+                        if (nodoSeleccionado && nodoSeleccionado.tipo !== TIPO.HUECO) {
+                            const p = crearEstructuraEstandar(TIPO.PARENTESIS, { interior: null });
+                            reemplazarEnPadre(nodoSeleccionado, p); delete registroNodos[p.interior.hijos[0].id];
+                            p.interior.hijos = [nodoSeleccionado]; nodoSeleccionado.padre = p.interior;
+                        } else { 
+                            const p = crearEstructuraEstandar(TIPO.PARENTESIS, { interior: null });
+                            insertarEnCursor(p); nodoSeleccionado = p.interior.hijos[0];
+                        }
+                        break;
+                }
+            }
+            else if (modoGlobal === 'INSERCION') {
+                if (event.key === ' ') intentarCompilarFuncion();
+                else if (event.key === '/') aplicarFraccionInteligente();
+                else if (event.key === '(') {
+                    if (!intentarCompilarFuncion()) {
+                        const p = crearEstructuraEstandar(TIPO.PARENTESIS, { interior: null });
+                        insertarEnCursor(p); nodoSeleccionado = p.interior.hijos[0];
+                    }
+                } 
+                else if (event.key === ')') {
+                    let nodoActual = nodoSeleccionado;
+                    while (nodoActual && nodoActual.tipo !== TIPO.PARENTESIS && nodoActual.tipo !== TIPO.FUNCION) nodoActual = nodoActual.padre;
+                    if (nodoActual) nodoSeleccionado = nodoActual;
+                }
+                else if (event.key === '^') {
+                    if (nodoSeleccionado && nodoSeleccionado.tipo !== TIPO.HUECO) {
+                        const s = crearEstructuraEstandar(TIPO.SUBSUPER, { base: null, subindice: null, exponente: null });
+                        reemplazarEnPadre(nodoSeleccionado, s); delete registroNodos[s.base.hijos[0].id];
+                        s.base.hijos = [nodoSeleccionado]; nodoSeleccionado.padre = s.base; nodoSeleccionado = s.exponente.hijos[0]; 
+                    } else {
+                        const s = crearEstructuraEstandar(TIPO.SUBSUPER, { base: null, subindice: null, exponente: null });
+                        insertarEnCursor(s); nodoSeleccionado = s.base.hijos[0];
+                    }
+                }
+                else if (event.key === '_') {
+                    if (nodoSeleccionado && nodoSeleccionado.tipo !== TIPO.HUECO) {
+                        const s = crearEstructuraEstandar(TIPO.SUBSUPER, { base: null, subindice: null, exponente: null });
+                        reemplazarEnPadre(nodoSeleccionado, s); delete registroNodos[s.base.hijos[0].id];
+                        s.base.hijos = [nodoSeleccionado]; nodoSeleccionado.padre = s.base; nodoSeleccionado = s.subindice.hijos[0]; 
+                    } else {
+                        const s = crearEstructuraEstandar(TIPO.SUBSUPER, { base: null, subindice: null, exponente: null });
+                        insertarEnCursor(s); nodoSeleccionado = s.base.hijos[0];
+                    }
+                }
+                else if (event.key.length === 1) {
+                    if (/[0-9]/.test(event.key)) {
+                        if (nodoSeleccionado && nodoSeleccionado.tipo === TIPO.NUMERO) nodoSeleccionado.valor += event.key;
+                        else insertarEnCursor(crearNodoValor(TIPO.NUMERO, event.key));
+                    } else if (/[a-zA-Z]/.test(event.key)) {
+                        insertarEnCursor(crearNodoValor(TIPO.VARIABLE, event.key));
+                    } else {
+                        insertarEnCursor(crearNodoValor(TIPO.OPERADOR, event.key));
+                    }
+                }
+            }
+
+            evaluarYGuardarHistorial(estadoPre);
+            renderizar();
+        });
+
+        window.addEventListener('load', renderizar);
+    </script>
+</body>
+</html>
